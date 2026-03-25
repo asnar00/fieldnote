@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvassing Report</title>
+<style>
+@font-face {
+  font-family: 'Switzer';
+  src: url('https://cdn.fontshare.com/wf/ZALDQTVRB5QDLEJASCHWEYTBMRQWVDHF/HEPIOCUARKGQGJLB2LJ6LIHSXOBE3IRZ/AZPQJ7VJFXBLEYKNABUQVUDYTE7P3CGJ.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font: 16px/1.6 'Switzer', sans-serif;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  color: #222;
+}
+h1 { font-size: 22px; margin-bottom: 8px; }
+#status { color: #888; margin-bottom: 24px; }
+#report { white-space: pre-wrap; }
+#report h2, #report strong { display: inline; }
+.nav-btn {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  right: 12px;
+  z-index: 100;
+  padding: 6px 14px;
+  border-radius: 12px;
+  border: none;
+  background: rgba(255, 192, 128, 0.85);
+  color: #000;
+  font: 600 13px/1 'Switzer', sans-serif;
+  text-decoration: none;
+  box-shadow: 0 0 0 1px #000;
+}
+</style>
+</head>
+<body>
+<a href="/map" class="nav-btn">map</a>
+<h1>Canvassing Report</h1>
+<div id="status">Generating…</div>
+<div id="report"></div>
+<script>
+fetch('/api/report')
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('status').textContent = '';
+    document.getElementById('report').innerHTML = data.report
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+  })
+  .catch(e => {
+    document.getElementById('status').textContent = 'Error: ' + e.message;
+  });
+</script>
+</body>
+</html>

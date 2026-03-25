@@ -1,0 +1,8 @@
+node_modules/
+venv/
+uploads/
+.DS_Store
+report.json
+version.json
+switzer.woff2
+*.log

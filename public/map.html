@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Selfie</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+@font-face {
+  font-family: 'Switzer';
+  src: url('https://cdn.fontshare.com/wf/ZALDQTVRB5QDLEJASCHWEYTBMRQWVDHF/HEPIOCUARKGQGJLB2LJ6LIHSXOBE3IRZ/AZPQJ7VJFXBLEYKNABUQVUDYTE7P3CGJ.woff2') format('woff2');
+  font-weight: 400; font-style: normal;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -webkit-user-select: none; user-select: none; }
+
+#map { width: 100%; height: 100%; }
+
+/* ---- Nav buttons ---- */
+.nav-btn {
+  position: fixed;
+  z-index: 9999;
+  padding: 6px 14px;
+  border-radius: 12px;
+  border: none;
+  background: rgba(255, 192, 128, 0.85);
+  color: #000;
+  font: 600 13px/1 'Switzer', sans-serif;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  text-decoration: none;
+  box-shadow: 0 0 0 1px #000;
+}
+
+/* ---- Report overlay ---- */
+#report-overlay {
+  display: none; position: fixed; inset: 0; z-index: 20000;
+  background: rgb(252, 243, 234);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 60px 20px 40px; font: 15px/1.6 'Switzer', sans-serif; color: #222;
+}
+#report-overlay.active { display: block; }
+#report-overlay .close-btn {
+  position: fixed; top: max(12px, env(safe-area-inset-top, 12px)); right: 12px; z-index: 20001;
+  padding: 6px 14px; border-radius: 12px; border: none;
+  background: rgba(255, 192, 128, 0.85); color: #000;
+  font: 600 13px/1 'Switzer', sans-serif; cursor: pointer; box-shadow: 0 0 0 1px #000;
+}
+#report-overlay h1 { font-size: 20px; margin-bottom: 16px; }
+#report-overlay h2 { font-size: 17px; margin: 6px 0 4px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,.12); }
+#report-overlay h3 { font-size: 15px; margin: 10px 0 2px; }
+#report-overlay p { margin: 0 0 4px; }
+#report-overlay p:empty { display: none; }
+#report-overlay ul { margin: 0 0 8px; padding-left: 20px; }
+#report-overlay li { margin-bottom: 4px; }
+#report-overlay hr { border: none; border-top: 1px solid rgba(0,0,0,.15); margin: 14px 0; }
+
+/* ---- QR overlay ---- */
+#qr-overlay {
+  display: none; position: fixed; inset: 0; z-index: 20000;
+  background: #fff; align-items: center; justify-content: center; flex-direction: column;
+}
+#qr-overlay.active { display: flex; }
+#qr-overlay img { width: 70vw; max-width: 400px; image-rendering: pixelated; }
+
+/* ---- Preview card (top of screen) ---- */
+#preview-card {
+  display: none; position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: 12px; right: 12px;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-radius: 16px; padding: 12px;
+  align-items: center; gap: 12px;
+}
+#preview-card.active { display: flex; }
+#preview-card .card-text {
+  flex: 1; color: #fff; font: 14px/1.4 'Switzer', sans-serif; white-space: pre-line;
+}
+#preview-card .card-text .meta { font-size: 11px; opacity: 0.7; display: block; margin-bottom: 4px; }
+#preview-card .card-thumb {
+  width: 56px; height: 75px; border-radius: 8px;
+  object-fit: cover; cursor: pointer; flex-shrink: 0; background: #333;
+}
+
+/* ---- Video player (lozenge, same as camera inset) ---- */
+#player {
+  display: none; position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: 12px; right: 12px;
+  bottom: max(100px, calc(env(safe-area-inset-bottom, 20px) + 80px));
+  border-radius: 16px; overflow: hidden;
+  z-index: 10000;
+  box-shadow: 0 2px 12px rgba(0,0,0,.5);
+  border: 2px solid #fff;
+  background: #000;
+}
+#player.active { display: block; }
+#player video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+#transcript {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 12px 16px max(12px, env(safe-area-inset-bottom, 12px));
+  background: linear-gradient(transparent, rgba(0,0,0,.8));
+  color: #fff; font: 14px/1.4 'Switzer', sans-serif; text-align: center;
+}
+#transcript:empty { display: none; }
+#transcript .meta { font-size: 11px; opacity: 0.7; display: block; margin-bottom: 4px; }
+
+/* ---- Camera inset ---- */
+#camera-inset {
+  display: none; position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: 12px; right: 12px;
+  bottom: max(100px, calc(env(safe-area-inset-bottom, 20px) + 80px));
+  border-radius: 16px; overflow: hidden;
+  z-index: 9500;
+  box-shadow: 0 2px 12px rgba(0,0,0,.5);
+  border: 2px solid #fff;
+}
+#camera-inset.active { display: block; }
+#camera-inset video {
+  width: 100%; height: 100%;
+  object-fit: cover; transform: scaleX(-1);
+}
+#camera-timer {
+  position: absolute; bottom: 6px; left: 0; right: 0;
+  text-align: center; color: #fff;
+  font: 700 18px/1 sans-serif;
+  text-shadow: 0 1px 4px rgba(0,0,0,.7);
+}
+
+/* ---- Record button (bottom center) ---- */
+#rec-area {
+  position: fixed;
+  bottom: max(28px, calc(env(safe-area-inset-bottom, 20px) + 8px));
+  left: 0; right: 0;
+  z-index: 9500;
+  display: flex; justify-content: center; align-items: center;
+  pointer-events: none;
+}
+#btn {
+  pointer-events: auto;
+  width: 72px; height: 72px;
+  border-radius: 50%; border: 4px solid #fff;
+  background: #e33; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .2s;
+  display: flex; align-items: center; justify-content: center;
+}
+#btn.recording { background: #fff; }
+#btn.recording .stop-icon { display: block; }
+#btn .stop-icon {
+  display: none; width: 22px; height: 22px; border-radius: 3px; background: #e33;
+}
+
+/* ---- Upload status (bottom left) ---- */
+#upload-status {
+  position: fixed;
+  bottom: max(28px, calc(env(safe-area-inset-bottom, 20px) + 8px));
+  left: 20px; z-index: 9500;
+  width: 40px; height: 40px;
+}
+#upload-status circle { fill: none; stroke-width: 3; }
+#upload-status .bg { stroke: rgba(255,255,255,.3); }
+#upload-status .fg {
+  stroke: #f80; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: center;
+  transition: stroke-dashoffset .2s linear;
+}
+#upload-status .count {
+  fill: #fff; font: 600 12px sans-serif; text-anchor: middle; dominant-baseline: central;
+}
+#upload-status .tick {
+  stroke: #4f4; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; fill: none;
+  opacity: 0; transition: opacity .3s;
+}
+#upload-status.done .tick { opacity: 1; }
+#upload-status.done .fg, #upload-status.done .count { opacity: 0; }
+#upload-status.done .bg { stroke: rgba(255,255,255,.15); }
+
+/* ---- QR button (bottom right, below report) ---- */
+#qr-btn {
+  bottom: max(28px, calc(env(safe-area-inset-bottom, 20px) + 8px));
+  right: 20px;
+  width: 36px; height: 36px; padding: 0;
+  border-radius: 50%; text-align: center; font-size: 11px;
+}
+
+/* ---- Map dots ---- */
+.selfie-dot {
+  width: 24px; height: 24px; background: #f80;
+  border: 3px solid #fff; border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: pointer;
+  transition: transform .2s, border-width .2s;
+}
+.selfie-dot.selected {
+  transform: scale(1.4); border-width: 4px;
+  box-shadow: 0 0 0 4px rgba(255,136,0,.4), 0 1px 4px rgba(0,0,0,.4);
+}
+.me-dot {
+  width: 14px; height: 14px; background: #4285f4;
+  border: 3px solid #fff; border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(66,133,244,.3), 0 1px 4px rgba(0,0,0,.3);
+}
+.peer-dot {
+  width: 10px; height: 10px; background: #1a5ab8;
+  border: 2px solid #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<button class="nav-btn" style="bottom:max(76px, calc(env(safe-area-inset-bottom, 20px) + 56px));right:20px" onclick="openReport()">report</button>
+<div id="report-overlay">
+  <button class="close-btn" onclick="document.getElementById('report-overlay').classList.remove('active')">close</button>
+  <h1>Canvassing Report</h1>
+  <div id="report-content"></div>
+</div>
+
+<!-- QR -->
+<button id="qr-btn" class="nav-btn" onclick="document.getElementById('qr-overlay').classList.add('active')">QR</button>
+<div id="qr-overlay" onclick="this.classList.remove('active')">
+  <p style="font:15px/1.4 'Switzer',sans-serif;color:#333;margin-bottom:16px;text-align:center">Scan this QR code to install the app</p>
+  <img src="/qr.png" alt="QR code">
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Preview card (top) -->
+<div id="preview-card">
+  <div class="card-text"></div>
+  <img class="card-thumb">
+</div>
+
+<!-- Video player -->
+<div id="player">
+  <video id="vid" playsinline></video>
+  <div id="transcript"></div>
+</div>
+
+<!-- Camera inset -->
+<div id="camera-inset">
+  <video id="camera-preview" autoplay playsinline muted></video>
+  <div id="camera-timer"></div>
+</div>
+
+<!-- Record button -->
+<div id="rec-area">
+  <div id="btn" role="button" tabindex="0">
+    <div class="stop-icon"></div>
+  </div>
+</div>
+
+<!-- Upload progress -->
+<svg id="upload-status" viewBox="0 0 40 40">
+  <circle class="bg" cx="20" cy="20" r="17"/>
+  <circle class="fg" cx="20" cy="20" r="17" stroke-dasharray="106.8" stroke-dashoffset="106.8"/>
+  <text class="count" x="20" y="20"></text>
+  <polyline class="tick" points="13,20 18,25 27,15"/>
+</svg>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ==================== MAP ====================
+const map = L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap', maxZoom: 19
+}).addTo(map);
+
+// ==================== PREVIEW / PLAYBACK ====================
+const player = document.getElementById('player');
+const vid = document.getElementById('vid');
+const transcriptEl = document.getElementById('transcript');
+const previewCard = document.getElementById('preview-card');
+const cardText = previewCard.querySelector('.card-text');
+const cardThumb = previewCard.querySelector('.card-thumb');
+
+function formatMeta(entry) {
+  const parts = [];
+  if (entry.address) parts.push(entry.address);
+  if (entry.timestamp) {
+    const d = new Date(entry.timestamp);
+    parts.push(d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+  }
+  return parts.join(' · ');
+}
+
+function setEntryContent(el, entry, prefix) {
+  const meta = formatMeta(entry);
+  const text = entry.transcript || '(no transcript yet)';
+  const p = prefix || '';
+  el.innerHTML = (meta ? `<span class="meta">${p}${meta}</span>` : '') + text;
+}
+
+let currentEntry = null;
+let currentMarkerEl = null;
+
+function closePreview() {
+  previewCard.classList.remove('active');
+  cardThumb.removeAttribute('src');
+  if (currentMarkerEl) currentMarkerEl.classList.remove('selected');
+  currentEntry = null;
+  currentMarkerEl = null;
+}
+
+function showPreview(entry, markerEl) {
+  if (currentMarkerEl) currentMarkerEl.classList.remove('selected');
+  currentEntry = entry;
+  currentMarkerEl = markerEl;
+  if (markerEl) markerEl.classList.add('selected');
+  const key = locKey(entry);
+  const group = markerGroups[key];
+  let meta = '';
+  if (group && group.entries.length > 1) {
+    meta = `(${group.index + 1}/${group.entries.length}) `;
+  }
+  setEntryContent(cardText, entry, meta);
+  cardThumb.src = entry.thumbnail ? '/videos/' + entry.thumbnail : '/videos/' + entry.filename;
+  previewCard.classList.add('active');
+}
+
+function openPlayer(entry) {
+  previewCard.classList.remove('active');
+  cardThumb.removeAttribute('src');
+  vid.style.opacity = '0';
+  vid.src = '/videos/' + entry.filename;
+  setEntryContent(transcriptEl, entry);
+  player.classList.add('active');
+  vid.onloadedmetadata = () => { vid.style.opacity = '1'; vid.play(); };
+}
+
+function closePlayer() {
+  vid.pause(); vid.removeAttribute('src'); vid.load();
+  vid.style.opacity = '0'; player.classList.remove('active');
+  if (currentEntry) showPreview(currentEntry, currentMarkerEl);
+}
+
+cardThumb.addEventListener('click', (e) => { e.stopPropagation(); if (currentEntry) openPlayer(currentEntry); });
+vid.addEventListener('ended', closePlayer);
+player.addEventListener('click', closePlayer);
+map.on('click', closePreview);
+
+// ==================== RECORDING ====================
+const MAX_SECONDS = 60;
+const btn = document.getElementById('btn');
+const cameraInset = document.getElementById('camera-inset');
+const cameraPreview = document.getElementById('camera-preview');
+const cameraTimer = document.getElementById('camera-timer');
+
+let stream = null;
+let recorder = null;
+let chunks = [];
+let timerInterval = null;
+let secondsLeft = MAX_SECONDS;
+let geoPos = null;
+
+function initGeo() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(p => { geoPos = p.coords; }, () => {},
+    { enableHighAccuracy: true, maximumAge: 60000 });
+  navigator.geolocation.getCurrentPosition(p => { if (!geoPos) geoPos = p.coords; }, () => {},
+    { enableHighAccuracy: false, maximumAge: Infinity, timeout: 0 });
+}
+
+async function initCamera() {
+  if (!window.isSecureContext) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
+    cameraPreview.srcObject = stream;
+  } catch (e) { console.error('Camera error:', e); }
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    cameraPreview.srcObject = null;
+  }
+}
+
+async function startRecording() {
+  if (!stream) await initCamera();
+  if (!stream) return;
+  chunks = [];
+
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus' : 'video/webm';
+  recorder = new MediaRecorder(stream, { mimeType });
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => upload();
+  recorder.start(100);
+
+  btn.classList.add('recording');
+  cameraInset.classList.add('active');
+  secondsLeft = MAX_SECONDS;
+  cameraTimer.textContent = secondsLeft;
+
+  timerInterval = setInterval(() => {
+    secondsLeft--;
+    cameraTimer.textContent = secondsLeft;
+    if (secondsLeft <= 0) stopRecording();
+  }, 1000);
+}
+
+function stopRecording() {
+  if (!recorder || recorder.state !== 'recording') return;
+  clearInterval(timerInterval);
+  recorder.stop();
+  btn.classList.remove('recording');
+  cameraInset.classList.remove('active');
+  stopCamera();
+}
+
+btn.addEventListener('click', () => {
+  if (recorder && recorder.state === 'recording') stopRecording();
+  else startRecording();
+});
+
+// ==================== UPLOAD QUEUE ====================
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('selfie-queue', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function enqueue(blob, lat, lon, duration) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').add({ blob, lat, lon, duration, timestamp: new Date().toISOString() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getQueue() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('queue', 'readonly');
+    const req = tx.objectStore('queue').getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dequeue(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+let uploading = false;
+const CIRC = 2 * Math.PI * 17;
+
+function setUploadProgress(pct) {
+  statusEl.querySelector('.fg').style.strokeDashoffset = CIRC * (1 - pct);
+}
+
+function xhrUpload(form) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = e => { if (e.lengthComputable) setUploadProgress(e.loaded / e.total); };
+    xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve(); else reject(new Error('Upload failed')); };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.ontimeout = () => reject(new Error('Timeout'));
+    xhr.timeout = 300000;
+    xhr.open('POST', '/upload');
+    xhr.send(form);
+  });
+}
+
+let queuePending = false;
+const statusEl = document.getElementById('upload-status');
+const statusCount = statusEl.querySelector('.count');
+
+function updateQueueDisplay(remaining) {
+  if (remaining === 0) {
+    statusEl.classList.add('done');
+    statusCount.textContent = '';
+    // Hide tick after 3 seconds
+    setTimeout(() => { statusEl.classList.remove('done'); }, 3000);
+  } else {
+    statusEl.classList.remove('done');
+    statusCount.textContent = remaining;
+  }
+}
+
+async function processQueue() {
+  if (uploading) { queuePending = true; return; }
+
+  const items = await getQueue();
+  if (!items.length) { updateQueueDisplay(0); return; }
+
+  uploading = true;
+  updateQueueDisplay(items.length);
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    try {
+      setUploadProgress(0);
+      updateQueueDisplay(items.length - i);
+      await fetch('/api/pre-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: item.lat, lon: item.lon, duration: item.duration, size: item.blob.size, timestamp: item.timestamp })
+      });
+      const form = new FormData();
+      form.append('video', item.blob, 'selfie.webm');
+      form.append('lat', item.lat || '');
+      form.append('lon', item.lon || '');
+      await xhrUpload(form);
+      setUploadProgress(1);
+      await dequeue(item.id);
+      playDing();
+    } catch (e) {
+      uploading = false;
+      return;
+    }
+  }
+
+  uploading = false;
+
+  if (queuePending) {
+    queuePending = false;
+    processQueue();
+  } else {
+    const remaining = await getQueue();
+    if (remaining.length > 0) {
+      processQueue();
+    } else {
+      updateQueueDisplay(0);
+    }
+  }
+}
+
+setInterval(processQueue, 30000);
+
+async function upload() {
+  const blob = new Blob(chunks, { type: 'video/webm' });
+  const duration = MAX_SECONDS - secondsLeft;
+  const lat = geoPos ? geoPos.latitude : null;
+  const lon = geoPos ? geoPos.longitude : null;
+
+  await enqueue(blob, lat, lon, duration);
+  setUploadProgress(0);
+  processQueue(); // don't await — let it run in background so user can keep recording
+}
+
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.5);
+  } catch (_) {}
+}
+
+// ==================== MAP MARKERS ====================
+const MeIcon = L.divIcon({ className: 'me-dot', iconSize: [14, 14] });
+let meMarker = null;
+
+function updateMyLocation() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(p => {
+    const ll = [p.coords.latitude, p.coords.longitude];
+    if (meMarker) meMarker.setLatLng(ll);
+    else meMarker = L.marker(ll, { icon: MeIcon, zIndexOffset: 1000 }).addTo(map);
+  }, () => {}, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+updateMyLocation();
+setInterval(updateMyLocation, 60000);
+
+const DotIcon = L.divIcon({ className: 'selfie-dot', iconSize: [24, 24] });
+const markerGroups = {};
+let allEntries = {};
+let initialLoad = true;
+
+function locKey(entry) {
+  return (Math.round(entry.lat * 10000) / 10000) + ',' + (Math.round(entry.lon * 10000) / 10000);
+}
+
+function loadMarkers() {
+  fetch('/api/uploads').then(r => r.json()).then(entries => {
+    if (!entries.length && !meMarker && initialLoad) { map.setView([51.5, -0.13], 13); return; }
+
+    const seen = new Set();
+    entries.forEach(e => { allEntries[e.filename] = e; seen.add(e.filename); });
+    for (const key in allEntries) { if (!seen.has(key)) delete allEntries[key]; }
+
+    const newGroups = {};
+    entries.forEach(entry => {
+      const key = locKey(entry);
+      if (!newGroups[key]) newGroups[key] = [];
+      newGroups[key].push(entry);
+    });
+
+    for (const key in markerGroups) {
+      if (!newGroups[key]) { map.removeLayer(markerGroups[key].marker); delete markerGroups[key]; }
+    }
+
+    for (const key in newGroups) {
+      const groupEntries = newGroups[key];
+      if (markerGroups[key]) {
+        markerGroups[key].entries = groupEntries;
+        if (markerGroups[key].index >= groupEntries.length) markerGroups[key].index = 0;
+      } else {
+        const first = groupEntries[0];
+        const marker = L.marker([first.lat, first.lon], { icon: DotIcon }).addTo(map);
+        const group = { marker, entries: groupEntries, index: 0 };
+        markerGroups[key] = group;
+        marker.on('click', () => {
+          if (currentEntry && locKey(currentEntry) === key) {
+            group.index = (group.index + 1) % group.entries.length;
+          } else { group.index = 0; }
+          showPreview(group.entries[group.index], marker.getElement());
+        });
+      }
+    }
+
+    if (initialLoad) {
+      const bounds = entries.map(e => [e.lat, e.lon]);
+      if (meMarker) bounds.push(meMarker.getLatLng());
+      if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+      initialLoad = false;
+    }
+  });
+}
+
+loadMarkers();
+setInterval(loadMarkers, 15000);
+
+// ==================== REPORT ====================
+function renderReport(md) {
+  return md
+    .replace(/^---$/gm, '<hr>')
+    .replace(/^### (.*)/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.*)/gm, '<li>$1</li>')
+    .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
+    .replace(/\n+(<h[123])/g, '$1')
+    .replace(/\n+(<hr)/g, '$1')
+    .replace(/\n+(<ul)/g, '$1')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p>(<h[123]|<hr|<ul)/g, '$1')
+    .replace(/(<\/h[123]>|<hr>|<\/ul>)<\/p>/g, '$1');
+}
+
+function openReport() {
+  const overlay = document.getElementById('report-overlay');
+  const content = document.getElementById('report-content');
+  content.textContent = '';
+  overlay.classList.add('active');
+  fetch('/api/report')
+    .then(r => { if (!r.ok) throw new Error('Server error'); return r.json(); })
+    .then(data => { content.innerHTML = renderReport(data.report); })
+    .catch(() => { content.textContent = 'Report unavailable — try again shortly.'; });
+}
+
+// ==================== SSE / PEERS ====================
+const sse = new EventSource('/api/events');
+let myClientId = null;
+const PeerIcon = L.divIcon({ className: 'peer-dot', iconSize: [10, 10] });
+const peerMarkers = {};
+
+sse.addEventListener('welcome', (e) => {
+  myClientId = JSON.parse(e.data).id;
+  sendMyLocation();
+  setInterval(sendMyLocation, 15000);
+});
+
+sse.addEventListener('locations', (e) => {
+  const locations = JSON.parse(e.data);
+  const seen = new Set();
+  locations.forEach(loc => {
+    if (loc.id === myClientId) return;
+    seen.add(loc.id);
+    if (peerMarkers[loc.id]) peerMarkers[loc.id].setLatLng([loc.lat, loc.lon]);
+    else peerMarkers[loc.id] = L.marker([loc.lat, loc.lon], { icon: PeerIcon, zIndexOffset: 500 }).addTo(map);
+  });
+  for (const id in peerMarkers) {
+    if (!seen.has(parseInt(id))) { map.removeLayer(peerMarkers[id]); delete peerMarkers[id]; }
+  }
+});
+
+function sendMyLocation() {
+  if (!myClientId || !navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(p => {
+    fetch('/api/location', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: myClientId, lat: p.coords.latitude, lon: p.coords.longitude })
+    });
+  }, () => {}, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+sse.addEventListener('new-upload', () => loadMarkers());
+
+// ==================== VERSION POLLING ====================
+let appVersion = null;
+
+function checkVersion() {
+  fetch('/api/version').then(r => r.json()).then(data => {
+    if (appVersion === null) { appVersion = data.version; return; }
+    if (data.version !== appVersion) {
+      const isRecording = recorder && recorder.state === 'recording';
+      if (isRecording || uploading) {
+        const check = setInterval(() => {
+          if (!(recorder && recorder.state === 'recording') && !uploading) {
+            clearInterval(check); location.reload();
+          }
+        }, 2000);
+      } else if (player.classList.contains('active')) {
+        vid.addEventListener('ended', () => location.reload(), { once: true });
+        player.addEventListener('click', () => location.reload(), { once: true });
+      } else {
+        location.reload();
+      }
+    }
+  }).catch(() => {});
+}
+
+checkVersion();
+setInterval(checkVersion, 5000);
+
+// ==================== SERVICE WORKER ====================
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+
+// ==================== INIT ====================
+initGeo();
+</script>
+</body>
+</html>

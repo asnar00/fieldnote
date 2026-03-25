@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Selfie</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#ffc080">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+@font-face {
+  font-family: 'Switzer';
+  src: url('https://cdn.fontshare.com/wf/ZALDQTVRB5QDLEJASCHWEYTBMRQWVDHF/HEPIOCUARKGQGJLB2LJ6LIHSXOBE3IRZ/AZPQJ7VJFXBLEYKNABUQVUDYTE7P3CGJ.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%; width: 100%;
+  background: rgb(255, 192, 128);
+  font-family: 'Switzer', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.logo {
+  font-size: 32px;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+
+.welcome {
+  font-size: 28px;
+  color: #000;
+  margin-bottom: 32px;
+}
+
+.instructions {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #000;
+  text-align: center;
+  margin-bottom: 32px;
+  max-width: 300px;
+}
+
+.instructions strong {
+  font-weight: 600;
+}
+
+.start-btn {
+  display: inline-block;
+  padding: 14px 36px;
+  border-radius: 16px;
+  border: none;
+  background: #000;
+  color: rgb(255, 192, 128);
+  font: 600 18px/1 'Switzer', sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+</style>
+</head>
+<body>
+  <div class="logo">ᕦ(ツ)ᕤ</div>
+  <div class="welcome">welcome!</div>
+  <div class="instructions" id="instructions"></div>
+  <a href="/" class="start-btn">get started</a>
+
+  <script>
+    const el = document.getElementById('instructions');
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isAndroid = /Android/.test(navigator.userAgent);
+
+    if (isIOS) {
+      el.innerHTML = 'To install, tap <strong>Share</strong> (the square with an arrow), scroll down and tap <strong>More</strong>, then <strong>Add to Home Screen</strong>.';
+    } else if (isAndroid) {
+      el.innerHTML = 'To install, tap the <strong>menu</strong> (three dots) then <strong>Add to Home screen</strong>.';
+    } else {
+      el.innerHTML = 'To install, use your browser menu to add this page to your home screen.';
+    }
+  </script>
+</body>
+</html>
