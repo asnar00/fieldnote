@@ -126,17 +126,18 @@ app.post('/upload', (req, res, next) => {
     next();
   });
 }, (req, res) => {
-  const { lat, lon } = req.body || {};
+  const { lat, lon, recorded_at } = req.body || {};
   if (!req.file) return res.status(400).json({ error: 'No video file' });
 
   const videoPath = req.file.path;
   const metaPath = req.file.path.replace(/\.webm$/, '.json');
 
-  // Write metadata
+  // Write metadata — use client's recording timestamp if available
   fs.writeFileSync(metaPath, JSON.stringify({
     lat: parseFloat(lat) || null,
     lon: parseFloat(lon) || null,
-    timestamp: new Date().toISOString(),
+    timestamp: recorded_at || new Date().toISOString(),
+    uploaded_at: new Date().toISOString(),
     filename: req.file.filename,
     size: req.file.size,
     ip: req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.ip

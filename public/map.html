@@ -216,11 +216,18 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
   border: 2px solid #fff; border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0,0,0,.3);
 }
+
+/* ---- Filter toggle ---- */
+#filter-btn {
+  bottom: max(124px, calc(env(safe-area-inset-bottom, 20px) + 104px));
+  right: 20px;
+}
 </style>
 </head>
 <body>
 
 <!-- Nav -->
+<button id="filter-btn" class="nav-btn" onclick="toggleFilter()">today</button>
 <button class="nav-btn" style="bottom:max(76px, calc(env(safe-area-inset-bottom, 20px) + 56px));right:20px" onclick="openReport()">report</button>
 <div id="report-overlay">
   <button class="close-btn" onclick="document.getElementById('report-overlay').classList.remove('active')">close</button>
@@ -528,6 +535,7 @@ async function processQueue() {
       form.append('video', item.blob, 'selfie.webm');
       form.append('lat', item.lat || '');
       form.append('lon', item.lon || '');
+      form.append('recorded_at', item.timestamp || '');
       await xhrUpload(form);
       setUploadProgress(1);
       await dequeue(item.id);
@@ -601,13 +609,35 @@ const DotIcon = L.divIcon({ className: 'selfie-dot', iconSize: [24, 24] });
 const markerGroups = {};
 let allEntries = {};
 let initialLoad = true;
+let filterMode = 'today'; // 'today' or 'all'
+
+function toggleFilter() {
+  filterMode = filterMode === 'today' ? 'all' : 'today';
+  document.getElementById('filter-btn').textContent = filterMode;
+  // Clear all markers and reload
+  for (const key in markerGroups) {
+    map.removeLayer(markerGroups[key].marker);
+    delete markerGroups[key];
+  }
+  closePreview();
+  initialLoad = true;
+  loadMarkers();
+}
+
+function isToday(timestamp) {
+  return new Date(timestamp).toDateString() === new Date().toDateString();
+}
 
 function locKey(entry) {
   return (Math.round(entry.lat * 10000) / 10000) + ',' + (Math.round(entry.lon * 10000) / 10000);
 }
 
 function loadMarkers() {
-  fetch('/api/uploads').then(r => r.json()).then(entries => {
+  fetch('/api/uploads').then(r => r.json()).then(rawEntries => {
+    const entries = filterMode === 'today'
+      ? rawEntries.filter(e => isToday(e.timestamp))
+      : rawEntries;
+
     if (!entries.length && !meMarker && initialLoad) { map.setView([51.5, -0.13], 13); return; }
 
     const seen = new Set();
