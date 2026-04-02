@@ -166,6 +166,50 @@ function buildWhisperPrompt(geo) {
   return `Recording near ${parts.join(', ')}.`;
 }
 
+// ---- Ward lookup via postcodes.io ----
+function lookupWard(lat, lon) {
+  return new Promise((resolve) => {
+    if (!lat || !lon) return resolve(null);
+    const url = `https://api.postcodes.io/postcodes?lon=${lon}&lat=${lat}`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.status === 200 && json.result && json.result.length > 0) {
+            const r = json.result[0];
+            resolve({
+              ward: r.admin_ward || null,
+              district: r.admin_district || null,
+              constituency: r.parliamentary_constituency || null
+            });
+          } else resolve(null);
+        } catch { resolve(null); }
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+function slugify(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function addWardToUser(userName, wardName) {
+  if (!userName || !wardName) return;
+  const users = getUsers();
+  if (!users[userName]) return;
+  const info = users[userName];
+  const record = typeof info === 'string' ? { phone: info } : info;
+  if (!record.wards) record.wards = [];
+  if (!record.wards.includes(wardName)) {
+    record.wards.push(wardName);
+    users[userName] = record;
+    saveUsers(users);
+    log(`Added ward "${wardName}" to user ${userName}`);
+  }
+}
+
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
   filename: (_req, file, cb) => {
@@ -354,27 +398,56 @@ app.post('/upload', (req, res, next) => {
     }
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   const { lat, lon, recorded_at } = req.body || {};
   if (!req.file) return res.status(400).json({ error: 'No video file' });
 
-  const videoPath = req.file.path;
-  const metaPath = req.file.path.replace(/\.webm$/, '.json');
-
-  // Write metadata — use client's recording timestamp if available
   const authUser = validateToken(req.headers['x-auth-token'] || req.query.token || parseCookie(req.headers.cookie, 'authToken'));
+  const parsedLat = parseFloat(lat) || null;
+  const parsedLon = parseFloat(lon) || null;
+
+  // Look up ward from GPS coordinates
+  const wardInfo = await lookupWard(parsedLat, parsedLon);
+  const wardSlug = wardInfo && wardInfo.ward ? slugify(wardInfo.ward) : null;
+
+  // Move file to ward subdirectory if we have a ward
+  let videoPath = req.file.path;
+  let relativeFilename = req.file.filename;
+  if (wardSlug) {
+    const wardDir = path.join(UPLOADS_DIR, wardSlug);
+    fs.mkdirSync(wardDir, { recursive: true });
+    const newVideoPath = path.join(wardDir, req.file.filename);
+    fs.renameSync(videoPath, newVideoPath);
+    videoPath = newVideoPath;
+    relativeFilename = path.join(wardSlug, req.file.filename);
+    log(`Ward lookup: ${wardInfo.ward} (${wardInfo.district}, ${wardInfo.constituency})`);
+  } else {
+    log(`No ward found for lat=${lat} lon=${lon}`);
+  }
+
+  const metaPath = videoPath.replace(/\.webm$/, '.json');
+
+  // Write metadata with ward info
   fs.writeFileSync(metaPath, JSON.stringify({
-    lat: parseFloat(lat) || null,
-    lon: parseFloat(lon) || null,
+    lat: parsedLat,
+    lon: parsedLon,
     timestamp: recorded_at || new Date().toISOString(),
     uploaded_at: new Date().toISOString(),
-    filename: req.file.filename,
+    filename: relativeFilename,
     size: req.file.size,
     user: authUser ? authUser.name : null,
-    ip: req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.ip
+    ip: req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.ip,
+    ward: wardInfo ? wardInfo.ward : null,
+    district: wardInfo ? wardInfo.district : null,
+    constituency: wardInfo ? wardInfo.constituency : null
   }, null, 2));
 
-  log(`Upload received: ${req.file.filename} (${(req.file.size/1024/1024).toFixed(1)}MB) lat=${lat} lon=${lon}`);
+  // Add ward to user's ward list
+  if (wardInfo && wardInfo.ward && authUser && authUser.name) {
+    addWardToUser(authUser.name, wardInfo.ward);
+  }
+
+  log(`Upload received: ${relativeFilename} (${(req.file.size/1024/1024).toFixed(1)}MB) lat=${lat} lon=${lon}`);
 
   // Clear any pending records
   fs.readdirSync(UPLOADS_DIR).filter(f => f.startsWith('pending-')).forEach(f => {
@@ -383,20 +456,21 @@ app.post('/upload', (req, res, next) => {
 
   // Extract thumbnail (skip for audio-only files)
   const thumbPath = videoPath.replace(/\.webm$/, '.jpg');
+  const relativeThumbnail = relativeFilename.replace(/\.webm$/, '.jpg');
   execFile('ffprobe', ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', videoPath], { timeout: 10000 }, (probeErr, probeOut) => {
     const hasVideo = probeOut && probeOut.trim() === 'video';
     if (!hasVideo) {
-      log(`Audio-only file ${req.file.filename}, skipping thumbnail`);
+      log(`Audio-only file ${relativeFilename}, skipping thumbnail`);
       return;
     }
     execFile('ffmpeg', ['-i', videoPath, '-ss', '0.5', '-vframes', '1', '-q:v', '4', thumbPath, '-y'], { timeout: 30000 }, (err) => {
       if (err) {
-        logErr(`Thumbnail error for ${req.file.filename}:`, err.message);
+        logErr(`Thumbnail error for ${relativeFilename}:`, err.message);
       } else {
-        log(`Thumbnail created for ${req.file.filename}`);
+        log(`Thumbnail created for ${relativeFilename}`);
         try {
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-          meta.thumbnail = req.file.filename.replace(/\.webm$/, '.jpg');
+          meta.thumbnail = relativeThumbnail;
           fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
         } catch {}
       }
@@ -404,7 +478,7 @@ app.post('/upload', (req, res, next) => {
   });
 
   // Reverse geocode then transcribe
-  reverseGeocode(parseFloat(lat), parseFloat(lon)).then(geo => {
+  reverseGeocode(parsedLat, parsedLon).then(geo => {
     const address = buildAddress(geo);
     const prompt = buildWhisperPrompt(geo);
 
@@ -414,7 +488,7 @@ app.post('/upload', (req, res, next) => {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
         meta.address = address;
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-        log(`Geocoded ${req.file.filename}: ${address}`);
+        log(`Geocoded ${relativeFilename}: ${address}`);
       } catch {}
     }
 
@@ -423,10 +497,10 @@ app.post('/upload', (req, res, next) => {
     const python = path.join(__dirname, 'venv', 'bin', 'python3');
     const args = [transcribeScript, videoPath];
     if (prompt) args.push(prompt);
-    log(`Transcribing ${req.file.filename} (prompt: "${prompt}")...`);
+    log(`Transcribing ${relativeFilename} (prompt: "${prompt}")...`);
     execFile(python, args, { timeout: 600000 }, (err, stdout) => {
       if (err) {
-        logErr(`Transcription error for ${req.file.filename}:`, err.message);
+        logErr(`Transcription error for ${relativeFilename}:`, err.message);
         return;
       }
       try {
@@ -434,17 +508,17 @@ app.post('/upload', (req, res, next) => {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
         meta.transcript = text;
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-        log(`Transcribed ${req.file.filename}: "${text}"`);
-        broadcast('new-upload', { filename: req.file.filename });
-        generateReport();
+        log(`Transcribed ${relativeFilename}: "${text}"`);
+        broadcast('new-upload', { filename: relativeFilename });
+        if (wardSlug) generateReport(wardSlug);
       } catch (e) {
-        logErr(`Failed to parse transcription for ${req.file.filename}:`, e.message);
+        logErr(`Failed to parse transcription for ${relativeFilename}:`, e.message);
       }
     });
   });
 
-  broadcast('new-upload', { filename: req.file.filename });
-  res.json({ ok: true, filename: req.file.filename });
+  broadcast('new-upload', { filename: relativeFilename });
+  res.json({ ok: true, filename: relativeFilename });
 });
 
 // Install page
@@ -463,27 +537,63 @@ app.get('/report', (_req, res) => {
 app.use('/videos', express.static(UPLOADS_DIR));
 
 // API: list all uploads with metadata
-app.get('/api/uploads', (_req, res) => {
-  const files = fs.readdirSync(UPLOADS_DIR).filter(f => f.endsWith('.json'));
-  const entries = files.map(f => {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(UPLOADS_DIR, f), 'utf8'));
-    } catch { return null; }
-  }).filter(e => e && e.lat != null && e.lon != null);
-  res.json(entries);
+app.get('/api/uploads', (req, res) => {
+  const wardFilter = req.query.ward || null;
+  const entries = scanUploads(wardFilter);
+  res.json(entries.filter(e => e.lat != null && e.lon != null));
+});
+
+// API: list available wards
+app.get('/api/wards', (_req, res) => {
+  const wards = [];
+  try {
+    for (const d of fs.readdirSync(UPLOADS_DIR)) {
+      const full = path.join(UPLOADS_DIR, d);
+      if (!fs.statSync(full).isDirectory()) continue;
+      const jsonFiles = fs.readdirSync(full).filter(f => f.endsWith('.json') && f !== 'report.json');
+      if (jsonFiles.length === 0) continue;
+      try {
+        const meta = JSON.parse(fs.readFileSync(path.join(full, jsonFiles[0]), 'utf8'));
+        wards.push({ slug: d, name: meta.ward || d, district: meta.district || null, constituency: meta.constituency || null });
+      } catch {
+        wards.push({ slug: d, name: d });
+      }
+    }
+  } catch {}
+  res.json(wards);
 });
 
 // ---- Report generation ----
 const Anthropic = require('@anthropic-ai/sdk');
 const anthropic = new Anthropic();
-const REPORT_PATH = path.join(__dirname, 'report.json');
 
-function getEntries() {
-  const files = fs.readdirSync(UPLOADS_DIR).filter(f => f.endsWith('.json') && !f.startsWith('pending-'));
-  return files.map(f => {
-    try { return JSON.parse(fs.readFileSync(path.join(UPLOADS_DIR, f), 'utf8')); }
-    catch { return null; }
-  }).filter(e => e && e.transcript).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+function scanUploads(wardSlug) {
+  const dirs = [];
+  if (wardSlug) {
+    const dir = path.join(UPLOADS_DIR, wardSlug);
+    if (fs.existsSync(dir)) dirs.push(dir);
+  } else {
+    dirs.push(UPLOADS_DIR);
+    try {
+      for (const d of fs.readdirSync(UPLOADS_DIR)) {
+        const full = path.join(UPLOADS_DIR, d);
+        if (fs.statSync(full).isDirectory()) dirs.push(full);
+      }
+    } catch {}
+  }
+  const entries = [];
+  for (const dir of dirs) {
+    for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json') && !f.startsWith('pending-') && f !== 'report.json')) {
+      try {
+        entries.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+      } catch {}
+    }
+  }
+  return entries;
+}
+
+function getEntries(wardSlug) {
+  return scanUploads(wardSlug).filter(e => e.transcript).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
 function formatTranscripts(entries) {
@@ -501,13 +611,14 @@ function findLatestSession(entries) {
   return entries.filter(e => new Date(e.timestamp).toDateString() === lastDate);
 }
 
-let reportGenerating = false;
+const reportGenerating = new Set();
 
-async function generateReport() {
-  if (reportGenerating) return;
-  reportGenerating = true;
+async function generateReport(wardSlug) {
+  if (!wardSlug) return;
+  if (reportGenerating.has(wardSlug)) return;
+  reportGenerating.add(wardSlug);
   try {
-    const allEntries = getEntries();
+    const allEntries = getEntries(wardSlug);
     if (!allEntries.length) return;
     const latestSession = findLatestSession(allEntries);
 
@@ -576,32 +687,39 @@ Report the following:
     });
 
     const report = message.content[0].text;
-    fs.writeFileSync(REPORT_PATH, JSON.stringify({
+    const reportPath = path.join(UPLOADS_DIR, wardSlug, 'report.json');
+    fs.writeFileSync(reportPath, JSON.stringify({
       report,
+      ward: wardSlug,
       generatedAt: new Date().toISOString(),
       entryCount: allEntries.length
     }, null, 2));
-    log(`Report generated and saved (${allEntries.length} entries)`);
+    log(`Report generated for ward "${wardSlug}" (${allEntries.length} entries)`);
   } catch (e) {
-    logErr('Report generation error:', e.message);
+    logErr(`Report generation error (${wardSlug}):`, e.message);
   } finally {
-    reportGenerating = false;
+    reportGenerating.delete(wardSlug);
   }
 }
 
-app.post('/api/report/generate', async (_req, res) => {
-  await generateReport();
+app.post('/api/report/generate', async (req, res) => {
+  const ward = req.query.ward;
+  if (!ward) return res.status(400).json({ error: 'ward query parameter required' });
+  await generateReport(ward);
   res.json({ ok: true });
 });
 
-app.get('/api/report', (_req, res) => {
-  if (fs.existsSync(REPORT_PATH)) {
+app.get('/api/report', (req, res) => {
+  const ward = req.query.ward;
+  if (!ward) return res.status(400).json({ error: 'ward query parameter required' });
+  const reportPath = path.join(UPLOADS_DIR, ward, 'report.json');
+  if (fs.existsSync(reportPath)) {
     try {
-      const cached = JSON.parse(fs.readFileSync(REPORT_PATH, 'utf8'));
+      const cached = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
       return res.json(cached);
     } catch {}
   }
-  res.json({ report: 'No report available yet. Record a video and a report will be generated automatically.' });
+  res.json({ report: 'No report available yet for this ward. Record a note and a report will be generated automatically.' });
 });
 
 // SSE for live updates
