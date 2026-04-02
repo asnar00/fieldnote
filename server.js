@@ -181,6 +181,7 @@ function lookupWard(lat, lon) {
             const r = json.result[0];
             resolve({
               ward: r.admin_ward || null,
+              wardCode: (r.codes && r.codes.admin_ward) || null,
               district: r.admin_district || null,
               constituency: r.parliamentary_constituency || null
             });
@@ -195,18 +196,23 @@ function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function addWardToUser(userName, wardName) {
+function addWardToUser(userName, wardName, wardCode) {
   if (!userName || !wardName) return;
   const users = getUsers();
   if (!users[userName]) return;
   const info = users[userName];
   const record = typeof info === 'string' ? { phone: info } : info;
   if (!record.wards) record.wards = [];
+  if (!record.wardCodes) record.wardCodes = {};
+  if (wardCode) record.wardCodes[slugify(wardName)] = wardCode;
   if (!record.wards.includes(wardName)) {
     record.wards.push(wardName);
     users[userName] = record;
     saveUsers(users);
-    log(`Added ward "${wardName}" to user ${userName}`);
+    log(`Added ward "${wardName}" (${wardCode || 'no code'}) to user ${userName}`);
+  } else if (wardCode && !record.wardCodes[slugify(wardName)]) {
+    users[userName] = record;
+    saveUsers(users);
   }
 }
 
@@ -281,8 +287,23 @@ app.post('/api/auth/verify', (req, res) => {
 app.get('/api/auth/check', (req, res) => {
   const token = req.headers['x-auth-token'];
   const user = validateToken(token);
-  if (user) return res.json({ ok: true, name: user.name });
-  res.status(401).json({ error: 'Not authenticated' });
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  const users = getUsers();
+  const userRecord = users[user.name];
+  const wards = (userRecord && typeof userRecord === 'object' && userRecord.wards) || [];
+  const wardCodes = (userRecord && typeof userRecord === 'object' && userRecord.wardCodes) || {};
+  res.json({ ok: true, name: user.name, wards, wardCodes });
+});
+
+app.get('/api/ward-lookup', async (req, res) => {
+  const { lat, lon } = req.query;
+  if (!lat || !lon) return res.status(400).json({ error: 'lat and lon required' });
+  const wardInfo = await lookupWard(parseFloat(lat), parseFloat(lon));
+  if (!wardInfo || !wardInfo.ward) return res.json({ ward: null });
+  // Add ward to authenticated user's list
+  const authUser = validateToken(req.headers['x-auth-token'] || req.query.token || parseCookie(req.headers.cookie, 'authToken'));
+  if (authUser && authUser.name) addWardToUser(authUser.name, wardInfo.ward, wardInfo.wardCode);
+  res.json({ ward: wardInfo.ward, wardCode: wardInfo.wardCode, slug: slugify(wardInfo.ward), district: wardInfo.district, constituency: wardInfo.constituency });
 });
 
 // ---- Invite endpoint ----
@@ -324,7 +345,7 @@ app.get('/api/users', (req, res) => {
 });
 
 // ---- Auth middleware (protect everything below) ----
-const PUBLIC_PATHS = ['/@login', '/api/auth/', '/manifest.json', '/sw.js', '/icon-', '/install', '/@restart'];
+const PUBLIC_PATHS = ['/@login', '/api/auth/', '/api/version', '/manifest.json', '/sw.js', '/icon-', '/install', '/@restart'];
 
 app.use((req, res, next) => {
   // Allow public paths
@@ -444,7 +465,7 @@ app.post('/upload', (req, res, next) => {
 
   // Add ward to user's ward list
   if (wardInfo && wardInfo.ward && authUser && authUser.name) {
-    addWardToUser(authUser.name, wardInfo.ward);
+    addWardToUser(authUser.name, wardInfo.ward, wardInfo.wardCode);
   }
 
   log(`Upload received: ${relativeFilename} (${(req.file.size/1024/1024).toFixed(1)}MB) lat=${lat} lon=${lon}`);

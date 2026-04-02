@@ -134,6 +134,31 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
 #invite-overlay ul { list-style: none; padding: 0; }
 #invite-overlay li { padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.1); }
 
+/* ---- Ward picker overlay ---- */
+#ward-overlay {
+  display: none; position: fixed; inset: 0; z-index: 20000;
+  background: rgb(252, 243, 234);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 60px 20px 40px; font: 15px/1.6 'Switzer', sans-serif; color: #222;
+}
+#ward-overlay.active { display: block; }
+#ward-overlay .close-btn {
+  position: fixed; top: max(12px, env(safe-area-inset-top, 12px)); right: 12px; z-index: 20001;
+  padding: 6px 14px; border-radius: 12px; border: none;
+  background: rgba(255, 192, 128, 0.85); color: #000;
+  font: 600 13px/1 'Switzer', sans-serif; cursor: pointer; box-shadow: 0 0 0 1px #000;
+}
+#ward-overlay h1 { font-size: 20px; margin-bottom: 16px; }
+.ward-option {
+  display: block; width: 100%; padding: 14px 16px; margin-bottom: 8px;
+  border-radius: 12px; border: 2px solid #000;
+  background: rgba(255,255,255,0.5); text-align: left;
+  font: 400 16px/1.3 'Switzer', sans-serif; color: #222; cursor: pointer;
+}
+.ward-option.selected { background: #000; color: rgb(255, 192, 128); font-weight: 600; }
+.ward-option .ward-district { display: block; font-size: 13px; opacity: 0.6; margin-top: 2px; }
+.ward-option.selected .ward-district { opacity: 0.7; }
+
 /* ---- Preview card (top of screen) ---- */
 #preview-card {
   display: none; position: fixed;
@@ -268,6 +293,27 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
   background: #1a5ab8;
 }
 
+/* ---- Ward lozenge (top left) ---- */
+#ward-lozenge {
+  display: none; position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: 50%; transform: translateX(-50%);
+  z-index: 9999;
+  height: 28px;
+  align-items: center;
+  border-radius: 14px;
+  background: rgba(0,0,0,0.6);
+  font: 600 12px/1 'Switzer', sans-serif;
+  color: #fff;
+  -webkit-tap-highlight-color: transparent;
+}
+#ward-lozenge.show { display: flex; }
+#ward-lozenge.tappable { cursor: pointer; }
+#ward-name {
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
 /* ---- Version badge ---- */
 #version-badge {
   display: none; position: fixed;
@@ -311,7 +357,7 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
 <!-- Overlays -->
 <div id="report-overlay">
   <button class="close-btn" onclick="document.getElementById('report-overlay').classList.remove('active')">close</button>
-  <h1>Canvassing Report</h1>
+  <h1 id="report-title">Canvassing Report</h1>
   <div id="report-content"></div>
 </div>
 <div id="invite-overlay">
@@ -333,6 +379,18 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
     <h2 style="font-size:16px;margin-bottom:8px">Team</h2>
     <ul id="invite-members"></ul>
   </div>
+</div>
+
+<!-- Ward picker overlay -->
+<div id="ward-overlay">
+  <button class="close-btn" onclick="closeWardPicker()">close</button>
+  <h1>Select Ward</h1>
+  <div id="ward-list"></div>
+</div>
+
+<!-- Ward lozenge -->
+<div id="ward-lozenge">
+  <span id="ward-name"></span>
 </div>
 
 <!-- Version badge -->
@@ -454,6 +512,132 @@ function authFetch(url, opts = {}) {
   opts.headers = { ...authHeaders, ...(opts.headers || {}) };
   return fetch(url, opts);
 }
+
+// ==================== WARD SELECTION ====================
+let selectedWard = localStorage.getItem('selectedWard') || null;
+let userWards = [];
+
+function initWardSelection() {
+  authFetch('/api/auth/check').then(r => r.json()).then(data => {
+    if (!data.ok) return;
+    userWards = data.wards || [];
+    Object.assign(wardCodeMap, data.wardCodes || {});
+    if (userWards.length > 0) {
+      if (!selectedWard || !userWards.some(w => slugify(w) === selectedWard)) {
+        selectedWard = slugify(userWards[0]);
+      }
+      setSelectedWard(selectedWard);
+    } else {
+      resolveWardFromGPS();
+    }
+    // Lozenge is always tappable
+    const lozenge = document.getElementById('ward-lozenge');
+    lozenge.classList.add('tappable');
+    lozenge.onclick = onWardTap;
+  }).catch(() => {});
+}
+
+let currentGPSWard = null; // { ward, slug, wardCode } from latest GPS position
+let wardBoundaryLayer = null;
+let wardCodeMap = {}; // slug -> wardCode
+
+function resolveWardFromGPS() {
+  if (!geoPos) return;
+  authFetch(`/api/ward-lookup?lat=${geoPos.latitude}&lon=${geoPos.longitude}`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ward) return;
+      currentGPSWard = data;
+      if (data.wardCode) {
+        const isNew = !wardCodeMap[data.slug];
+        wardCodeMap[data.slug] = data.wardCode;
+        if (isNew && data.slug === selectedWard) showWardBoundary(selectedWard);
+      }
+      addWardIfNew(data.ward);
+      if (!selectedWard) setSelectedWard(data.slug);
+    })
+    .catch(() => {});
+}
+
+function addWardIfNew(wardName) {
+  if (!userWards.includes(wardName)) {
+    userWards.push(wardName);
+  }
+}
+
+function setSelectedWard(slug) {
+  selectedWard = slug;
+  localStorage.setItem('selectedWard', slug);
+  const wardName = userWards.find(w => slugify(w) === slug) || slug;
+  document.getElementById('ward-name').textContent = wardName;
+  document.getElementById('ward-lozenge').classList.add('show');
+  showWardBoundary(slug);
+}
+
+function showWardBoundary(slug) {
+  if (wardBoundaryLayer) { map.removeLayer(wardBoundaryLayer); wardBoundaryLayer = null; }
+  const code = wardCodeMap[slug];
+  if (!code) return;
+  const url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/ArcGIS/rest/services/Wards_May_2024_Boundaries_UK_BSC/FeatureServer/0/query'
+    + '?where=' + encodeURIComponent("WD24CD='" + code + "'")
+    + '&outFields=WD24NM&f=geojson';
+  fetch(url).then(r => r.json()).then(data => {
+    if (!data.features || !data.features.length) return;
+    wardBoundaryLayer = L.geoJSON(data, {
+      style: { color: '#4285f4', weight: 2, opacity: 0.6, fill: false }
+    }).addTo(map);
+  }).catch(() => {});
+}
+
+function slugify(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function onWardTap() {
+  if (currentGPSWard) addWardIfNew(currentGPSWard.ward);
+  if (userWards.length > 1) {
+    openWardPicker();
+  } else if (userWards.length === 1) {
+    setSelectedWard(slugify(userWards[0]));
+    reloadMarkers();
+  }
+}
+
+function openWardPicker() {
+  const overlay = document.getElementById('ward-overlay');
+  const list = document.getElementById('ward-list');
+  list.innerHTML = '';
+  userWards.forEach(wardName => {
+    const slug = slugify(wardName);
+    const btn = document.createElement('button');
+    btn.className = 'ward-option' + (slug === selectedWard ? ' selected' : '');
+    btn.innerHTML = wardName;
+    btn.onclick = () => {
+      setSelectedWard(slug);
+      closeWardPicker();
+      reloadMarkers();
+    };
+    list.appendChild(btn);
+  });
+  overlay.classList.add('active');
+}
+
+function closeWardPicker() {
+  document.getElementById('ward-overlay').classList.remove('active');
+}
+
+function reloadMarkers() {
+  for (const key in markerGroups) {
+    map.removeLayer(markerGroups[key].marker);
+    delete markerGroups[key];
+  }
+  closePreview();
+  initialLoad = true;
+  loadMarkers();
+}
+
+// Init ward selection on page load
+initWardSelection();
 
 // ==================== QR CODE GENERATOR ====================
 function generateQR(canvas, text) {
@@ -668,8 +852,11 @@ function initGeo() {
   geoInitialised = true;
   navigator.geolocation.watchPosition(p => { geoPos = p.coords; }, () => {},
     { enableHighAccuracy: true, maximumAge: 60000 });
-  navigator.geolocation.getCurrentPosition(p => { if (!geoPos) geoPos = p.coords; }, () => {},
-    { enableHighAccuracy: false, maximumAge: Infinity, timeout: 0 });
+  navigator.geolocation.getCurrentPosition(p => {
+    if (!geoPos) geoPos = p.coords;
+    resolveWardFromGPS();
+  }, () => {}, { enableHighAccuracy: false, maximumAge: Infinity, timeout: 0 });
+  setInterval(resolveWardFromGPS, 60000);
 }
 
 async function initCamera() {
@@ -991,7 +1178,8 @@ function locKey(entry) {
 }
 
 function loadMarkers() {
-  authFetch('/api/uploads').then(r => r.json()).then(rawEntries => {
+  const wardParam = selectedWard ? '?ward=' + encodeURIComponent(selectedWard) : '';
+  authFetch('/api/uploads' + wardParam).then(r => r.json()).then(rawEntries => {
     const entries = filterMode === 'today'
       ? rawEntries.filter(e => isToday(e.timestamp))
       : rawEntries;
@@ -1067,9 +1255,12 @@ function renderReport(md) {
 function openReport() {
   const overlay = document.getElementById('report-overlay');
   const content = document.getElementById('report-content');
+  const wardName = userWards.find(w => slugify(w) === selectedWard) || selectedWard || '';
+  document.getElementById('report-title').textContent = wardName ? wardName + ' Canvassing Report' : 'Canvassing Report';
   content.textContent = '';
   overlay.classList.add('active');
-  authFetch('/api/report')
+  const wardParam = selectedWard ? '?ward=' + encodeURIComponent(selectedWard) : '';
+  authFetch('/api/report' + wardParam)
     .then(r => { if (!r.ok) throw new Error('Server error'); return r.json(); })
     .then(data => { content.innerHTML = renderReport(data.report); })
     .catch(() => { content.textContent = 'Report unavailable — try again shortly.'; });
