@@ -806,4 +806,59 @@ app.post('/@restart', (_req, res) => {
 
 const server = app.listen(PORT, () => {
   log(`Fieldnote server running on http://localhost:${PORT}`);
+  migrateExistingUploads();
 });
+
+// ---- One-time migration: move root-level uploads into per-ward folders ----
+async function migrateExistingUploads() {
+  const rootJsonFiles = fs.readdirSync(UPLOADS_DIR)
+    .filter(f => f.endsWith('.json') && !f.startsWith('pending-') && f !== 'report.json');
+  if (rootJsonFiles.length === 0) return;
+  log(`Migrating ${rootJsonFiles.length} existing uploads to per-ward folders...`);
+
+  for (const jsonFile of rootJsonFiles) {
+    const jsonPath = path.join(UPLOADS_DIR, jsonFile);
+    try {
+      const meta = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      if (!meta.lat || !meta.lon) {
+        log(`  skip ${jsonFile}: no GPS coordinates`);
+        continue;
+      }
+
+      const wardInfo = await lookupWard(meta.lat, meta.lon);
+      if (!wardInfo || !wardInfo.ward) {
+        log(`  skip ${jsonFile}: ward lookup failed`);
+        continue;
+      }
+
+      const ward = slugify(wardInfo.ward);
+      const wardDir = path.join(UPLOADS_DIR, ward);
+      fs.mkdirSync(wardDir, { recursive: true });
+
+      // Move all associated files (.json, .webm, .jpg)
+      const baseName = jsonFile.replace(/\.json$/, '');
+      const extensions = ['.json', '.webm', '.jpg'];
+      for (const ext of extensions) {
+        const src = path.join(UPLOADS_DIR, baseName + ext);
+        const dst = path.join(wardDir, baseName + ext);
+        if (fs.existsSync(src)) fs.renameSync(src, dst);
+      }
+
+      // Update metadata with ward info and new relative paths
+      meta.ward = wardInfo.ward;
+      meta.district = wardInfo.district;
+      meta.constituency = wardInfo.constituency;
+      meta.filename = path.join(ward, baseName + '.webm');
+      if (meta.thumbnail) meta.thumbnail = path.join(ward, meta.thumbnail);
+
+      // Add ward to user record
+      if (meta.user) addWardToUser(meta.user, wardInfo.ward);
+
+      fs.writeFileSync(path.join(wardDir, jsonFile), JSON.stringify(meta, null, 2));
+      log(`  migrated ${baseName} → ${ward}/`);
+    } catch (e) {
+      logErr(`  migration error for ${jsonFile}:`, e.message);
+    }
+  }
+  log('Migration complete');
+}
