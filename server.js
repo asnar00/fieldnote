@@ -332,14 +332,16 @@ app.post('/api/invite', async (req, res) => {
   const token = req.headers['x-auth-token'];
   if (!validateToken(token)) return res.status(401).json({ error: 'Not authenticated' });
 
-  const { name, phone } = req.body;
+  const { name, phone, ward } = req.body;
   if (!name || !phone) return res.status(400).json({ error: 'Name and phone required' });
 
   const norm = normalisePhone(phone);
   const users = getUsers();
-  users[name] = { phone: norm };
+  const newUser = { phone: norm };
+  if (ward) { newUser.wards = [ward]; }
+  users[name] = newUser;
   saveUsers(users);
-  log(`User invited: ${name} (${norm})`);
+  log(`User invited: ${name} (${norm})${ward ? ' ward: ' + ward : ''}`);
 
   // Send SMS with login link (use friendly domain, not punycode)
   const loginUrl = `https://fieldnote.nøøb.org/@login?phone=${encodeURIComponent(phone)}`;
@@ -361,7 +363,13 @@ app.get('/api/users', (req, res) => {
   const token = req.headers['x-auth-token'];
   if (!validateToken(token)) return res.status(401).json({ error: 'Not authenticated' });
   const users = getUsers();
-  const names = Object.keys(users);
+  const ward = req.query.ward;
+  const names = Object.keys(users).filter(name => {
+    if (!ward) return true;
+    const info = users[name];
+    const wards = (typeof info === 'object' && info.wards) || [];
+    return wards.some(w => slugify(w) === ward);
+  });
   res.json(names);
 });
 

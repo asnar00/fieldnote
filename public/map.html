@@ -283,10 +283,10 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
   box-shadow: 0 0 0 4px rgba(255,136,0,.4), 0 1px 4px rgba(0,0,0,.4);
 }
 .user-dot {
-  width: 22px; height: 22px; border-radius: 50%;
+  width: 26px; height: 26px; border-radius: 50%;
   border: 2px solid #fff;
   display: flex; align-items: center; justify-content: center;
-  font: 700 11px/1 sans-serif; color: #fff;
+  font: 700 9px/1 sans-serif; color: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,.3);
   pointer-events: none;
 }
@@ -369,6 +369,7 @@ html, body { height: 100%; width: 100%; background: #000; overflow: hidden; -web
   <button class="close-btn" onclick="closeInvite()">close</button>
   <h1>Invite</h1>
   <div id="invite-form">
+    <select id="invite-ward" style="display:block;width:100%;padding:12px 14px;border-radius:10px;border:2px solid #000;background:rgba(255,255,255,0.5);font:400 16px 'Switzer',sans-serif;outline:none;margin-bottom:10px;-webkit-appearance:none"></select>
     <input id="invite-name" type="text" placeholder="Name">
     <input id="invite-phone" type="tel" placeholder="Phone number">
     <button class="invite-send" onclick="sendInvite()">add &amp; show QR</button>
@@ -526,6 +527,7 @@ let userWards = [];
 function initWardSelection() {
   authFetch('/api/auth/check').then(r => r.json()).then(data => {
     if (!data.ok) return;
+    if (data.name) localStorage.setItem('userName', data.name);
     userWards = data.wards || [];
     Object.assign(wardCodeMap, data.wardCodes || {});
     if (userWards.length > 0) {
@@ -679,7 +681,19 @@ function openInvite() {
   document.getElementById('invite-overlay').classList.add('active');
   document.getElementById('invite-qr').style.display = 'none';
   document.getElementById('invite-error').style.display = 'none';
+  populateInviteWards();
   loadMembers();
+}
+
+function populateInviteWards() {
+  const select = document.getElementById('invite-ward');
+  const allWards = [...userWards];
+  if (currentGPSWard && !allWards.includes(currentGPSWard.ward)) allWards.push(currentGPSWard.ward);
+  select.innerHTML = allWards.map(w => {
+    const slug = slugify(w);
+    return `<option value="${slug}"${slug === selectedWard ? ' selected' : ''}>${w}</option>`;
+  }).join('');
+  select.onchange = () => loadMembers();
 }
 
 function closeInvite() {
@@ -689,6 +703,8 @@ function closeInvite() {
 async function sendInvite() {
   const name = document.getElementById('invite-name').value.trim();
   const phone = document.getElementById('invite-phone').value.trim();
+  const wardSlug = document.getElementById('invite-ward').value;
+  const wardName = [...document.getElementById('invite-ward').options].find(o => o.value === wardSlug)?.textContent || '';
   const err = document.getElementById('invite-error');
   if (!name || !phone) { err.textContent = 'Enter name and phone'; err.style.display = ''; return; }
   err.style.display = 'none';
@@ -697,7 +713,7 @@ async function sendInvite() {
     const r = await authFetch('/api/invite', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders },
-      body: JSON.stringify({ name, phone })
+      body: JSON.stringify({ name, phone, ward: wardName })
     });
     const data = await r.json();
     if (!r.ok) { err.textContent = data.error; err.style.display = ''; return; }
@@ -722,7 +738,8 @@ async function sendInvite() {
 
 async function loadMembers() {
   try {
-    const r = await authFetch('/api/users');
+    const ward = document.getElementById('invite-ward').value;
+    const r = await authFetch('/api/users' + (ward ? '?ward=' + encodeURIComponent(ward) : ''));
     const names = await r.json();
     const ul = document.getElementById('invite-members');
     ul.innerHTML = names.map(n => `<li>${n}</li>`).join('');
@@ -1145,10 +1162,11 @@ function playDing() {
 
 // ==================== MAP MARKERS ====================
 function userIcon(name, isMe) {
-  const initial = (name || '?').charAt(0).toUpperCase();
+  const parts = (name || '?').split(/\s+/);
+  const initial = parts.map(p => p.charAt(0).toUpperCase()).join('');
   return L.divIcon({
     className: 'user-dot ' + (isMe ? 'me' : 'peer'),
-    iconSize: [22, 22],
+    iconSize: [26, 26],
     html: initial
   });
 }
