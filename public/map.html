@@ -934,8 +934,8 @@ function showPreview(entry, markerEl) {
   currentEntry = entry;
   currentMarkerEl = markerEl;
   if (markerEl) markerEl.classList.add('selected');
-  const key = locKey(entry);
-  const group = markerGroups[key];
+  const key = findGroupForEntry(entry);
+  const group = key ? markerGroups[key] : null;
   let meta = '';
   if (group && group.entries.length > 1) {
     meta = `(${group.index + 1}/${group.entries.length}) `;
@@ -1308,7 +1308,7 @@ function updateMyLocation() {
   navigator.geolocation.getCurrentPosition(p => {
     const ll = [p.coords.latitude, p.coords.longitude];
     if (meMarker) meMarker.setLatLng(ll);
-    else meMarker = L.marker(ll, { icon: MeIcon, zIndexOffset: 1000 }).addTo(map);
+    else meMarker = L.marker(ll, { icon: MeIcon, zIndexOffset: 1000, interactive: false }).addTo(map);
   }, () => {}, { enableHighAccuracy: true, timeout: 10000 });
 }
 
@@ -1481,7 +1481,7 @@ sse.addEventListener('locations', (e) => {
     if (loc.id === myClientId) return;
     seen.add(loc.id);
     if (peerMarkers[loc.id]) peerMarkers[loc.id].setLatLng([loc.lat, loc.lon]);
-    else peerMarkers[loc.id] = L.marker([loc.lat, loc.lon], { icon: userIcon(loc.name, false), zIndexOffset: 500 }).addTo(map);
+    else peerMarkers[loc.id] = L.marker([loc.lat, loc.lon], { icon: userIcon(loc.name, false), zIndexOffset: 500, interactive: false }).addTo(map);
   });
   for (const id in peerMarkers) {
     if (!seen.has(parseInt(id))) { map.removeLayer(peerMarkers[id]); delete peerMarkers[id]; }
