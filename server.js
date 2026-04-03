@@ -573,13 +573,15 @@ app.post('/upload', (req, res, next) => {
   const parsedLat = parseFloat(lat) || null;
   const parsedLon = parseFloat(lon) || null;
 
-  // Look up location from GPS and find matching campaign
+  // Use client-selected campaign if provided, otherwise match from GPS
+  const clientCampaign = req.body.campaign || null;
   const wardInfo = await lookupWard(parsedLat, parsedLon);
+  const allCampaigns = getCampaigns();
   const userRecord = authUser ? getUsers()[authUser.name] : null;
-  const userCampaigns = (userRecord && userRecord.campaigns) || [];
-  const campaignSlug = wardInfo
-    ? findCampaignForLocation(wardInfo.ward, wardInfo.constituency, userCampaigns)
-    : null;
+  const userCampaignSlugs = (userRecord && userRecord.campaigns) || [];
+  const campaignSlug = (clientCampaign && allCampaigns[clientCampaign])
+    ? clientCampaign
+    : (wardInfo ? findCampaignForLocation(wardInfo.ward, wardInfo.constituency, userCampaignSlugs) : null);
 
   // Move file to campaign subdirectory if we have a match
   let videoPath = req.file.path;

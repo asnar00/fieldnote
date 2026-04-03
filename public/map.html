@@ -872,7 +872,7 @@ async function loadMembers() {
 }
 
 // ==================== MAP ====================
-const map = L.map('map', { attributionControl: false, zoomControl: false });
+const map = L.map('map', { attributionControl: false, zoomControl: false }).setView([51.5, -0.13], 13);
 map.createPane('boundary');
 map.getPane('boundary').style.zIndex = 450;
 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
@@ -1232,6 +1232,7 @@ async function processQueue() {
       form.append('lat', item.lat || '');
       form.append('lon', item.lon || '');
       form.append('recorded_at', item.timestamp || '');
+      form.append('campaign', selectedCampaign || '');
       const resp = await xhrUpload(form);
       if (!resp.ok || !resp.filename) throw new Error('Server did not confirm receipt');
       setUploadProgress(1);
@@ -1341,10 +1342,15 @@ const CLUSTER_PX = 30; // pixels — dots closer than this merge into one group
 let lastEntries = [];
 
 function pixelKey(entry) {
-  const pt = map.latLngToContainerPoint([entry.lat, entry.lon]);
-  const gx = Math.floor(pt.x / CLUSTER_PX);
-  const gy = Math.floor(pt.y / CLUSTER_PX);
-  return gx + ',' + gy;
+  try {
+    const pt = map.latLngToContainerPoint([entry.lat, entry.lon]);
+    const gx = Math.floor(pt.x / CLUSTER_PX);
+    const gy = Math.floor(pt.y / CLUSTER_PX);
+    return gx + ',' + gy;
+  } catch {
+    // Map view not set yet — fall back to GPS rounding
+    return (Math.round(entry.lat * 10000) / 10000) + ',' + (Math.round(entry.lon * 10000) / 10000);
+  }
 }
 
 function groupEntries(entries) {
@@ -1367,7 +1373,7 @@ function findGroupForEntry(entry) {
 
 function rebuildMarkers() {
   const entries = lastEntries;
-  if (!entries.length && !meMarker && initialLoad) { map.setView([51.5, -0.13], 13); return; }
+  if (!entries.length && !meMarker && initialLoad) return;
 
   const newGroups = groupEntries(entries);
 
